@@ -1,0 +1,12 @@
+{
+  "name": "Start API Server",
+  "version": "1.0.0",
+  "description": "Inicia o servidor FastAPI em modo desenvolvimento",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": ".venv\\Scripts\\python.exe -m uvicorn main:app --reload"
+  }
+}

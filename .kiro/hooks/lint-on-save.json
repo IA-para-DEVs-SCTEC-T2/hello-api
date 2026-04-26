@@ -1,0 +1,13 @@
+{
+  "name": "Lint Python on Save",
+  "version": "1.0.0",
+  "description": "Executa verificação de código Python ao salvar arquivos",
+  "when": {
+    "type": "fileEdited",
+    "patterns": ["*.py"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Verifique se há problemas de sintaxe ou estilo no arquivo Python editado"
+  }
+}

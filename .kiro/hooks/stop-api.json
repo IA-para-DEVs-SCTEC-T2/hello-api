@@ -1,0 +1,12 @@
+{
+  "name": "Stop API Server",
+  "version": "1.0.0",
+  "description": "Para o servidor FastAPI em execução",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Por favor, pare o processo do servidor API que está rodando"
+  }
+}
