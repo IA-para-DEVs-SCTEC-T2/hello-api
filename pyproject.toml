@@ -1,0 +1,16 @@
+[project]
+name = "hello-api"
+version = "2.0.0"
+description = "API REST para gerenciar cadastro de alunos com FastAPI"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
