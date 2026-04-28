@@ -1,24 +1,26 @@
-# Use Python 3.13 slim image
+# ─── Base Image ───────────────────────────────────────────────────────────────
 FROM python:3.13-slim
 
-# Set working directory
+# ─── Environment ──────────────────────────────────────────────────────────────
 WORKDIR /app
 
-# Install UV
+# ─── Dependencies ─────────────────────────────────────────────────────────────
 RUN pip install uv
 
-# Copy dependency files
 COPY pyproject.toml uv.lock* ./
 
-# Install dependencies
-RUN uv pip install --system fastapi "uvicorn[standard]" python-jose[cryptography] passlib[bcrypt] python-dotenv
+RUN uv pip install --system \
+    fastapi \
+    "uvicorn[standard]" \
+    "python-jose[cryptography]" \
+    "passlib[bcrypt]" \
+    python-dotenv
 
-# Copy application code
+# ─── Application ──────────────────────────────────────────────────────────────
 COPY main.py .
 COPY .env.example .env
 
-# Expose port
+# ─── Runtime ──────────────────────────────────────────────────────────────────
 EXPOSE 8000
 
-# Run the application
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
