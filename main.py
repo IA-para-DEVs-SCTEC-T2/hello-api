@@ -1,89 +1,107 @@
-from fastapi import FastAPI, HTTPException, status, Path, Depends
+import os
+from datetime import datetime, timedelta
+from typing import List, Optional
+
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException, Path, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field
-from typing import List, Optional
-from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-import os
-from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
-# Carregar variáveis de ambiente
+# ---------------------------------------------------------------------------
+# Configuração
+# ---------------------------------------------------------------------------
+
 load_dotenv()
 
-# Configurações de autenticação
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = os.getenv("ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
-PROFESSOR_USERNAME = os.getenv("PROFESSOR_USERNAME")
-PROFESSOR_PASSWORD = os.getenv("PROFESSOR_PASSWORD")
+SECRET_KEY: str = os.getenv("SECRET_KEY")
+ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+PROFESSOR_USERNAME: str = os.getenv("PROFESSOR_USERNAME")
+PROFESSOR_PASSWORD: str = os.getenv("PROFESSOR_PASSWORD")
 
-# Contexto de criptografia
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# ---------------------------------------------------------------------------
+# Aplicação
+# ---------------------------------------------------------------------------
 
 app = FastAPI(
     title="API de Cadastro de Alunos",
     description="API REST para gerenciar cadastro de alunos com operações CRUD completas e autenticação JWT",
     version="2.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
 )
 
-# Modelos de dados
+# ---------------------------------------------------------------------------
+# Modelos
+# ---------------------------------------------------------------------------
+
 class Token(BaseModel):
-    """Modelo de token JWT."""
+    """Token JWT retornado após autenticação."""
+
     access_token: str
     token_type: str
 
+
 class Aluno(BaseModel):
-    """Modelo de dados para representar um aluno."""
+    """Representa um aluno cadastrado no sistema."""
+
     id: Optional[int] = Field(None, description="ID único do aluno (gerado automaticamente)")
     nome: str = Field(..., min_length=3, max_length=100, description="Nome completo do aluno")
     idade: int = Field(..., ge=1, le=150, description="Idade do aluno")
     curso: str = Field(..., min_length=3, max_length=100, description="Curso em que o aluno está matriculado")
     email: str = Field(..., description="Email do aluno")
-    
-    class Config:
-        json_schema_extra = {
+
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "nome": "João Silva",
                 "idade": 20,
                 "curso": "Engenharia de Software",
-                "email": "joao@example.com"
+                "email": "joao@example.com",
             }
         }
+    }
 
+
+# ---------------------------------------------------------------------------
 # Banco de dados em memória
-alunos_db = []
-contador_id = 1
+# ---------------------------------------------------------------------------
 
-# Funções de autenticação
+alunos_db: list[dict] = []
+contador_id: int = 1
+
+# ---------------------------------------------------------------------------
+# Autenticação
+# ---------------------------------------------------------------------------
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verifica se a senha corresponde ao hash."""
+    """Verifica se a senha em texto puro corresponde ao hash armazenado."""
     return pwd_context.verify(plain_password, hashed_password)
 
+
 def authenticate_user(username: str, password: str) -> bool:
-    """Autentica o usuário professor."""
+    """Valida as credenciais do professor."""
     if username != PROFESSOR_USERNAME:
         return False
     return verify_password(password, PROFESSOR_PASSWORD)
 
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Cria um token JWT."""
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    """Gera um token JWT com tempo de expiração."""
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
+    payload = {**data.copy(), "exp": expire}
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> str:
-    """Valida o token JWT e retorna o usuário."""
-    credentials_exception = HTTPException(
+    """Decodifica o token JWT e retorna o usuário autenticado."""
+    unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Credenciais inválidas",
         headers={"WWW-Authenticate": "Bearer"},
@@ -92,48 +110,74 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> str:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
-            raise credentials_exception
+            raise unauthorized
         return username
     except JWTError:
-        raise credentials_exception
+        raise unauthorized
+
+# ---------------------------------------------------------------------------
+# Helpers internos
+# ---------------------------------------------------------------------------
+
+def _encontrar_aluno(aluno_id: int) -> tuple[int, dict]:
+    """Retorna o índice e os dados do aluno, ou lança 404."""
+    for i, aluno in enumerate(alunos_db):
+        if aluno["id"] == aluno_id:
+            return i, aluno
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Aluno com ID {aluno_id} não encontrado",
+    )
+
+
+def _email_em_uso(email: str, ignorar_id: Optional[int] = None) -> bool:
+    """Verifica se o e-mail já está cadastrado (opcionalmente ignora um ID)."""
+    return any(
+        a["email"] == email and a["id"] != ignorar_id
+        for a in alunos_db
+    )
+
+# ---------------------------------------------------------------------------
+# Rotas
+# ---------------------------------------------------------------------------
 
 @app.get("/", include_in_schema=False)
 def root():
-    """Redireciona para a documentação Swagger."""
     return RedirectResponse(url="/docs")
+
 
 @app.post(
     "/token",
     response_model=Token,
     summary="Login do Professor",
     description="Autentica o professor e retorna um token JWT para operações protegidas.",
-    tags=["Autenticação"]
+    tags=["Autenticação"],
 )
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    """Endpoint de login para o professor."""
     if not authenticate_user(form_data.username, form_data.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Usuário ou senha incorretos",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+
     access_token = create_access_token(
-        data={"sub": form_data.username}, expires_delta=access_token_expires
+        data={"sub": form_data.username},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
     return {"access_token": access_token, "token_type": "bearer"}
+
 
 @app.get(
     "/alunos",
     response_model=List[Aluno],
     summary="Listar todos os alunos",
     description="Retorna uma lista com todos os alunos cadastrados no sistema.",
-    tags=["Alunos"]
+    tags=["Alunos"],
 )
 def listar_alunos():
-    """Lista todos os alunos cadastrados."""
     return alunos_db
+
 
 @app.get(
     "/alunos/{aluno_id}",
@@ -142,19 +186,14 @@ def listar_alunos():
     description="Retorna os dados de um aluno específico pelo seu ID.",
     responses={
         200: {"description": "Aluno encontrado com sucesso"},
-        404: {"description": "Aluno não encontrado"}
+        404: {"description": "Aluno não encontrado"},
     },
-    tags=["Alunos"]
+    tags=["Alunos"],
 )
 def obter_aluno(aluno_id: int = Path(..., description="ID do aluno a ser buscado", ge=1)):
-    """Busca um aluno específico pelo ID."""
-    aluno = next((a for a in alunos_db if a["id"] == aluno_id), None)
-    if not aluno:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Aluno com ID {aluno_id} não encontrado"
-        )
+    _, aluno = _encontrar_aluno(aluno_id)
     return aluno
+
 
 @app.post(
     "/alunos",
@@ -164,26 +203,24 @@ def obter_aluno(aluno_id: int = Path(..., description="ID do aluno a ser buscado
     description="Cria um novo aluno no sistema com os dados fornecidos.",
     responses={
         201: {"description": "Aluno criado com sucesso"},
-        422: {"description": "Dados inválidos"}
+        422: {"description": "Dados inválidos"},
     },
-    tags=["Alunos"]
+    tags=["Alunos"],
 )
 def criar_aluno(aluno: Aluno):
-    """Cria um novo aluno no sistema."""
     global contador_id
-    
-    # Verifica se email já existe
-    if any(a["email"] == aluno.email for a in alunos_db):
+
+    if _email_em_uso(aluno.email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email já cadastrado no sistema"
+            detail="Email já cadastrado no sistema",
         )
-    
-    aluno_dict = aluno.model_dump()
-    aluno_dict["id"] = contador_id
+
+    novo_aluno = {**aluno.model_dump(), "id": contador_id}
     contador_id += 1
-    alunos_db.append(aluno_dict)
-    return aluno_dict
+    alunos_db.append(novo_aluno)
+    return novo_aluno
+
 
 @app.put(
     "/alunos/{aluno_id}",
@@ -193,33 +230,25 @@ def criar_aluno(aluno: Aluno):
     responses={
         200: {"description": "Aluno atualizado com sucesso"},
         404: {"description": "Aluno não encontrado"},
-        422: {"description": "Dados inválidos"}
+        422: {"description": "Dados inválidos"},
     },
-    tags=["Alunos"]
+    tags=["Alunos"],
 )
 def atualizar_aluno(
     aluno_id: int = Path(..., description="ID do aluno a ser atualizado", ge=1),
-    aluno: Aluno = None
+    aluno: Aluno = None,
 ):
-    """Atualiza os dados de um aluno existente."""
-    for i, a in enumerate(alunos_db):
-        if a["id"] == aluno_id:
-            # Verifica se email já existe em outro aluno
-            if any(a["email"] == aluno.email and a["id"] != aluno_id for a in alunos_db):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email já cadastrado para outro aluno"
-                )
-            
-            aluno_dict = aluno.model_dump()
-            aluno_dict["id"] = aluno_id
-            alunos_db[i] = aluno_dict
-            return aluno_dict
-    
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Aluno com ID {aluno_id} não encontrado"
-    )
+    if _email_em_uso(aluno.email, ignorar_id=aluno_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email já cadastrado para outro aluno",
+        )
+
+    i, _ = _encontrar_aluno(aluno_id)
+    aluno_atualizado = {**aluno.model_dump(), "id": aluno_id}
+    alunos_db[i] = aluno_atualizado
+    return aluno_atualizado
+
 
 @app.delete(
     "/alunos/{aluno_id}",
@@ -228,25 +257,18 @@ def atualizar_aluno(
     responses={
         200: {"description": "Aluno deletado com sucesso"},
         401: {"description": "Não autenticado"},
-        404: {"description": "Aluno não encontrado"}
+        404: {"description": "Aluno não encontrado"},
     },
-    tags=["Alunos"]
+    tags=["Alunos"],
 )
 def deletar_aluno(
     aluno_id: int = Path(..., description="ID do aluno a ser deletado", ge=1),
-    current_user: str = Depends(get_current_user)
+    current_user: str = Depends(get_current_user),
 ):
-    """Remove um aluno do sistema. Apenas o professor pode executar esta operação."""
-    for i, a in enumerate(alunos_db):
-        if a["id"] == aluno_id:
-            aluno_deletado = alunos_db.pop(i)
-            return {
-                "mensagem": "Aluno deletado com sucesso",
-                "aluno": aluno_deletado,
-                "deletado_por": current_user
-            }
-    
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Aluno com ID {aluno_id} não encontrado"
-    )
+    i, aluno = _encontrar_aluno(aluno_id)
+    alunos_db.pop(i)
+    return {
+        "mensagem": "Aluno deletado com sucesso",
+        "aluno": aluno,
+        "deletado_por": current_user,
+    }
